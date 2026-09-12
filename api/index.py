@@ -5,8 +5,25 @@ class handler(BaseHTTPRequestHandler):
     def respond(self, status, payload):
         self.send_response(status)
         self.send_header('Content-Type', 'application/json')
+        origin = self.headers.get('Origin')
+        allowed = {item.strip() for item in __import__('os').environ.get('CORS_ORIGINS', 'https://markecia-web.vercel.app').split(',')}
+        if origin in allowed:
+            self.send_header('Access-Control-Allow-Origin', origin)
+            self.send_header('Vary', 'Origin')
         self.end_headers()
         self.wfile.write(json.dumps(payload).encode())
+
+    def do_OPTIONS(self):
+        origin = self.headers.get('Origin')
+        allowed = {item.strip() for item in __import__('os').environ.get('CORS_ORIGINS', 'https://markecia-web.vercel.app').split(',')}
+        if origin not in allowed:
+            return self.respond(403, {'error': 'Origen no permitido'})
+        self.send_response(204)
+        self.send_header('Access-Control-Allow-Origin', origin)
+        self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.send_header('Vary', 'Origin')
+        self.end_headers()
 
     def do_GET(self):
         self.respond(200, {'status': 'ok', 'service': 'ai-agent'})
