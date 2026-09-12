@@ -10,13 +10,13 @@ class RuleBasedPlanner:
         text = request.message.lower()
         if any(word in text for word in ("torta", "pastel", "cake")):
             requirements = [
-                ProductRequirement(query="harina"),
-                ProductRequirement(query="azucar"),
-                ProductRequirement(query="huevos"),
-                ProductRequirement(query="leche"),
+                ProductRequirement(query="flour"),
+                ProductRequirement(query="sugar"),
+                ProductRequirement(query="eggs"),
+                ProductRequirement(query="milk"),
                 ProductRequirement(query="cocoa chocolate"),
             ]
-            return ShoppingPlan(summary="Ingredientes base para una torta de chocolate.", requirements=requirements)
+            return ShoppingPlan(summary="Core ingredients for a chocolate cake.", requirements=requirements)
         if any(word in text for word in ("pintar", "cuadro", "lienzo")):
             return ShoppingPlan(
                 summary="Materiales básicos para pintar un cuadro.",
@@ -33,6 +33,6 @@ class RuleBasedPlanner:
             )
         # The deterministic executor will report a missing product rather than guessing.
         return ShoppingPlan(
-            summary="Buscaré el producto o concepto solicitado.",
+            summary="I will look for the requested product or concept.",
             requirements=[ProductRequirement(query=request.message)],
         )

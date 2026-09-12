@@ -17,7 +17,7 @@ class handler(BaseHTTPRequestHandler):
         origin = self.headers.get('Origin')
         allowed = {item.strip() for item in __import__('os').environ.get('CORS_ORIGINS', 'https://markecia-web.vercel.app').split(',')}
         if origin not in allowed:
-            return self.respond(403, {'error': 'Origen no permitido'})
+            return self.respond(403, {'error': 'Origin is not allowed'})
         self.send_response(204)
         self.send_header('Access-Control-Allow-Origin', origin)
         self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
@@ -33,7 +33,7 @@ class handler(BaseHTTPRequestHandler):
             length = int(self.headers.get('Content-Length', 0))
             message = json.loads(self.rfile.read(length)).get('message', '')
         except Exception:
-            return self.respond(400, {'error': 'JSON inválido'})
+            return self.respond(400, {'error': 'Invalid JSON'})
         if not message:
-            return self.respond(400, {'error': 'message es obligatorio'})
-        self.respond(200, {'response': 'El agente está disponible y conectado al entorno MarkECIA.', 'recommendations': []})
+            return self.respond(400, {'error': 'message is required'})
+        self.respond(200, {'response': 'The agent is available and connected to the MarkECIA environment.', 'recommendations': []})
