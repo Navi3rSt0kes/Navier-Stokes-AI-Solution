@@ -1,24 +1,26 @@
-# Shopping Agent Core
+# Shopping Agent Core — integration guide
 
-Biblioteca Python para un agente de compras que entiende solicitudes en lenguaje
-natural y opera contra APIs de catálogo y carrito que viven en otros repositorios.
-No crea un e-commerce, no guarda inventario y no implementa checkout.
+Python library for a shopping agent that understands natural-language requests and operates against catalogue and
+cart APIs owned by other repositories. It does not build an e-commerce site, does not store inventory, and does not
+implement checkout.
 
-## Qué hace
+For the project overview, tech stack, configuration reference, and status table, see [README.md](README.md). This
+document focuses on **using the library from another codebase**.
 
-1. Un planificador convierte una solicitud como “quiero una torta de chocolate” en
-   requisitos genéricos.
-2. El ejecutor consulta el catálogo externo para cada requisito.
-3. Solo el ejecutor valida producto, moneda, stock, precio y presupuesto.
-4. Si el llamador autoriza la escritura, el ejecutor llama al API de carrito con una
-   clave de idempotencia; en caso contrario devuelve una propuesta.
+## What it does
 
-El modelo nunca decide precios, stock ni IDs. Tampoco recibe permiso de red directo:
-las únicas acciones disponibles son los adaptadores `CatalogGateway` y `CartGateway`.
+1. A planner turns a request such as "quiero una torta de chocolate" into generic requirements.
+2. The executor queries the external catalogue for each requirement.
+3. Only the executor validates product, currency, stock, price, and budget.
+4. If the caller authorizes the write, the executor calls the cart API with an idempotency key; otherwise it returns
+   a proposal.
 
-## Instalación y demostración local
+The model never decides prices, stock, or IDs, and is never granted direct network access: the only available actions
+are the `CatalogGateway` and `CartGateway` adapters.
 
-Requiere Python 3.11 o superior.
+## Local installation and demo
+
+Requires Python 3.11 or newer.
 
 ```powershell
 python -m venv .venv
@@ -28,13 +30,11 @@ python -m agent_core.demo
 python -m pytest
 ```
 
-El modo predeterminado usa un catálogo y carrito simulados. No requiere clave ni
-conexión a otros proyectos.
+The default mode uses a simulated catalogue and cart. It requires no API key and no connection to other projects.
 
-## Uso desde otro repositorio
+## Using it from another repository
 
-Instala este proyecto como dependencia y llama al agente desde el backend que ya
-gestiona las peticiones del cliente:
+Install this project as a dependency and call the agent from the backend that already handles client requests:
 
 ```python
 from agent_core import AgentRequest, AgentService
@@ -54,64 +54,95 @@ result = await agent.run(AgentRequest(
 return result.model_dump()
 ```
 
-Con `cart_write_authorized=False`, el resultado tiene estado `needs_confirmation` y
-no llama al carrito. Tras confirmar en tu aplicación, reenvía la solicitud con
-`cart_write_authorized=True`.
+With `cart_write_authorized=False` the result has status `needs_confirmation` and the cart API is not called. After
+the user confirms in your application, resend the request with `cart_write_authorized=True`.
 
-## Conectar servicios reales
+### Request fields
 
-Copia `.env.example` a `.env` y configura las URLs de las APIs que ya existen:
+| Field | Type | Notes |
+| --- | --- | --- |
+| `message` | `str` | 1–2000 characters |
+| `user_id` | `str` | 1–128 characters |
+| `store_id` | `str` | 1–128 characters; forwarded to the catalogue search |
+| `cart_id` | `str` | 1–128 characters; substituted into the cart paths |
+| `currency` | `str` | Exactly 3 characters, default `COP`. Candidates whose currency differs are discarded |
+| `budget_minor` | `int \| None` | Smallest currency unit; compared against the current cart total plus the proposal |
+| `cart_write_authorized` | `bool` | Default `False`. Required for any write |
+| `conversation_id` | `str \| None` | Up to 128 characters; part of the idempotency key |
+
+### Injecting your own gateways
+
+```python
+service = AgentService.create(catalog=MyCatalogGateway(), cart=MyCartGateway())
+```
+
+Any object satisfying the protocols in `agent_core/tools/contracts.py` is accepted — this is the intended extension
+point when an existing API does not match the default HTTP shapes.
+
+## Connecting real services
+
+Copy `.env.example` to `.env` and configure the URLs of the APIs that already exist:
 
 ```dotenv
 AGENT_PLANNER=openai
-OPENAI_API_KEY=tu_clave
+OPENAI_API_KEY=your_key
 OPENAI_MODEL=gpt-4o-mini
 CART_WRITE_POLICY=authorized_only
 
-CATALOG_API_BASE_URL=https://catalogo.ejemplo.com
+CATALOG_API_BASE_URL=https://catalog.example.com
 CATALOG_SEARCH_PATH=/products/search
-CART_API_BASE_URL=https://carrito.ejemplo.com
+CART_API_BASE_URL=https://cart.example.com
 CART_GET_PATH=/carts/{cart_id}
 CART_ADD_ITEMS_PATH=/carts/{cart_id}/items
-SERVICE_API_TOKEN=token-del-servicio
+SERVICE_API_TOKEN=service-token
 ```
 
-Los adaptadores HTTP esperan estos contratos neutrales:
+The library reads these through `Settings.from_env()`; it does not parse `.env` files itself, so export the variables
+or load the file with your own tooling.
+
+The HTTP adapters expect these neutral contracts:
 
 ```text
 POST CATALOG_SEARCH_PATH
 { "store_id", "query", "filters", "limit" }
-→ { "products": [Product] }  o  [Product]
+→ { "products": [Product] }  or  [Product]
 
 GET CART_GET_PATH
 → CartSnapshot
 
-POST CART_ADD_ITEMS_PATH, cabecera Idempotency-Key
+POST CART_ADD_ITEMS_PATH, header Idempotency-Key
 { "items": [CartItem] }
 → CartSnapshot
 ```
 
-Los tipos `Product`, `CartItem` y `CartSnapshot` están en `agent_core.models`. Si una
-API externa tiene una forma diferente, adapta el mapeo en `agent_core/tools/http.py`
-o implementa los protocolos de `agent_core/tools/contracts.py`; no cambies la lógica
-del orquestador.
+`Product`, `CartItem`, and `CartSnapshot` live in `agent_core.models`. If an external API has a different shape,
+adapt the mapping in `agent_core/tools/http.py` or implement the protocols in `agent_core/tools/contracts.py`; do not
+change the orchestrator logic.
 
-## Planificadores
+Both adapters send `Accept: application/json` and `Content-Type: application/json`, add
+`Authorization: Bearer <SERVICE_API_TOKEN>` when that token is set, and retry `HTTP_MAX_RETRIES` times with
+exponential backoff before raising `ExternalServiceError`.
 
-- `AGENT_PLANNER=mock`: reglas locales para desarrollo y pruebas.
-- `AGENT_PLANNER=openai`: `OpenAIPlanner` usa Responses API y function calling para
-  producir un plan estructurado. El resultado contiene conceptos, nunca productos
-  inventados; el ejecutor sigue consultando los servicios externos.
+> The MarkECIA services do not currently expose these routes. `Navi3rSt0kes-WereHouse` uses `GET /buscar` and
+> `POST /carrito/validar`; `NavierStokes-ApiGateway` uses `GET /api/products` and `PUT /api/cart/items`. Connecting
+> either one requires a custom gateway or a mapping change in the HTTP adapter.
 
-## Estados de respuesta
+## Planners
 
-| Estado | Significado |
+- `AGENT_PLANNER=mock`: local rules for development and testing. Recognizes cake, painting, and construction
+  keywords; anything else is forwarded as a single requirement so the executor reports it as missing rather than
+  guessing.
+- `AGENT_PLANNER=openai`: `OpenAIPlanner` uses the Responses API with strict function calling to produce a structured
+  plan. The result contains concepts, never invented products; the executor still queries the external services.
+
+## Response statuses
+
+| Status | Meaning |
 | --- | --- |
-| `completed` | Se agregaron artículos autorizados al carrito. |
-| `needs_confirmation` | Hay propuesta, pero falta autorización de escritura. |
-| `missing_products` | Falta al menos un requisito indispensable. |
-| `budget_exceeded` | El total proyectado supera el presupuesto. |
-| `failed` | Un planificador o API externa no estuvo disponible. |
+| `completed` | Authorized items were added to the cart. |
+| `needs_confirmation` | A proposal exists, but write authorization is missing. |
+| `missing_products` | At least one indispensable requirement is unmet. |
+| `budget_exceeded` | The projected total exceeds the stated budget. |
+| `failed` | A planner or an external API was unavailable. |
 
-Consulta [ARCHITECTURE.md](ARCHITECTURE.md) para las responsabilidades y límites de
-cada componente.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the responsibilities and limits of each component.

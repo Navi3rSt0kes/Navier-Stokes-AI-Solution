@@ -1,51 +1,68 @@
-# Arquitectura
+# Architecture
 
-`shopping-agent-core` es una biblioteca de orquestación, no un backend de comercio.
-Su único trabajo es transformar una petición humana en consultas y acciones contra
-servicios que pertenecen a otros repositorios.
+`shopping-agent-core` is an orchestration library, not a commerce backend. Its only job is to turn a human request
+into queries and actions against services that belong to other repositories.
 
 ```text
-Aplicación o backend llamador
+Calling application or backend
         │ AgentRequest
         ▼
     AgentService
         │
-        ├── Planificador (reglas locales u OpenAI)
-        │       └── requisitos genéricos: "huevos", "lienzo", "martillo"
+        ├── Planner (local rules or OpenAI)
+        │       └── generic requirements: "eggs", "canvas", "hammer"
         │
-        └── Ejecutor determinista
-                ├── CatalogGateway.search_catalog(...) ──► API de catálogo ajena
-                ├── CartGateway.get_cart(...) ───────────► API de carrito ajena
-                └── CartGateway.add_items_to_cart(...) ─► API de carrito ajena
+        └── Deterministic executor
+                ├── CatalogGateway.search_catalog(...) ──► external catalogue API
+                ├── CartGateway.get_cart(...) ───────────► external cart API
+                └── CartGateway.add_items_to_cart(...) ─► external cart API
 ```
 
-## Responsabilidades
+## Responsibilities
 
-El planificador solo propone conceptos y cantidades. Puede ser el proveedor local
-para desarrollo o `OpenAIPlanner` en producción. No recibe la autoridad de escribir
-en servicios externos y no establece precios ni disponibilidad.
+**The planner** only proposes concepts and quantities. It can be the local provider for development or
+`OpenAIPlanner` in production. It is not granted authority to write to external services and does not set prices or
+availability. Its output is capped at 12 requirements, each with a quantity between 1 and 50.
 
-El ejecutor valida todos los candidatos que devuelve el catálogo: moneda, stock,
-precio y presupuesto. Solo convierte productos retornados por `CatalogGateway` en
-artículos del carrito. El permiso `cart_write_authorized` se verifica antes de la
-única operación con efecto lateral.
+**The executor** validates every candidate returned by the catalogue: currency, stock, price, and budget. It converts
+only products returned by `CatalogGateway` into cart items. The `cart_write_authorized` permission is checked before
+the single side-effecting operation.
 
-## Integración
+**`CartWritePolicy`** keeps authorization in the caller's hands rather than the language model's. In
+`authorized_only` mode a write requires an explicit `cart_write_authorized=True` on the request; in `never` mode no
+write is ever performed.
 
-Los protocolos `CatalogGateway` y `CartGateway` son los puertos de integración.
-`HttpCatalogGateway` y `HttpCartGateway` son adaptadores HTTP configurables. Si las
-APIs existentes usan otra forma de autenticación o JSON, se modifica únicamente el
-adaptador correspondiente; el orquestador y los modelos del agente no cambian.
+## Decision order
 
-Cada escritura usa una clave de idempotencia derivada del contexto de la petición.
-Los reintentos se aplican solo a solicitudes HTTP fallidas. Los adaptadores reales
-siguen siendo responsables de aplicar sus propias reglas de autorización y de volver
-a validar stock y precio de forma atómica.
+`ShoppingOrchestrator.run()` evaluates outcomes in a fixed order, and each terminal state returns immediately:
 
-## Límites deliberados
+1. Read the cart snapshot and build the plan. Any failure here yields `failed`.
+2. Resolve each requirement against the catalogue, keeping the gateway's first candidate whose currency matches the
+   request and whose stock covers the quantity. Relevance ranking belongs to the gateway; the executor does not
+   re-rank, so a cheaper but less relevant item cannot displace the catalogue's best match.
+3. Any unmet required requirement → `missing_products`.
+4. Current cart total plus the proposal above `budget_minor` → `budget_exceeded`.
+5. Policy does not permit the write → `needs_confirmation`.
+6. Otherwise perform the write → `completed`, or `failed` if the cart API rejects it.
 
-- No se persisten conversaciones, productos ni carritos aquí.
-- No se expone un endpoint web: el backend dueño de la sesión importa `AgentService`
-  o lo ejecuta desde un worker.
-- No se devuelve razonamiento interno del modelo; solo una explicación y una traza de
-  acciones de negocio apta para el usuario o el backend llamador.
+States 3 to 5 always leave the cart untouched and say so in `warnings`.
+
+## Integration
+
+The `CatalogGateway` and `CartGateway` protocols are the integration ports. `HttpCatalogGateway` and
+`HttpCartGateway` are configurable HTTP adapters. If the existing APIs use a different authentication scheme or JSON
+shape, only the corresponding adapter changes; the orchestrator and the agent models stay the same.
+
+When no base URL is configured, `AgentService.create()` falls back to the in-memory mock gateways, which is what makes
+the demo and the test suite runnable offline.
+
+Every write uses an idempotency key derived from the request context — a `uuid5` over user, store, cart, conversation,
+and message — sent as the `Idempotency-Key` header. Retries apply only to failed HTTP requests. Real adapters remain
+responsible for enforcing their own authorization rules and for re-validating stock and price atomically.
+
+## Deliberate limits
+
+- No conversations, products, or carts are persisted here.
+- No web endpoint is exposed: the backend that owns the session imports `AgentService` or runs it from a worker.
+- No internal model reasoning is returned; only a user-facing explanation and a trace of business actions suitable for
+  the user or the calling backend.
