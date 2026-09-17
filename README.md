@@ -286,13 +286,4 @@ every selected ID comes from the catalogue gateway.
 - Reservation, checkout, conversation persistence, and inventory storage are deliberately out of scope; see
   [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## Troubleshooting
 
-| Symptom | Cause | Action |
-| --- | --- | --- |
-| `OPENAI_API_KEY is required when AGENT_PLANNER=openai` | Planner set to `openai` without a key | Provide the key or fall back to `AGENT_PLANNER=mock` |
-| `AGENT_PLANNER must be 'mock' or 'openai'` | Unsupported planner value | Fix the variable |
-| `CART_WRITE_POLICY must be 'authorized_only' or 'never'` | Unsupported policy value | Fix the variable |
-| Every response is `needs_confirmation` | `cart_write_authorized` is `False`, or the policy is `never` | Resend with authorization, and check `CART_WRITE_POLICY` |
-| Responses are `failed` with an `External request ... failed` warning | The catalogue or cart API is unreachable after all retries | Check the base URLs, the token, and `HTTP_TIMEOUT_SECONDS` |
-| Results look like demo data | No base URL configured, so mock gateways are in use | Set `CATALOG_API_BASE_URL` and `CART_API_BASE_URL` |
